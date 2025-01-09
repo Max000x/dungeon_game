@@ -1,3 +1,5 @@
+import tkinter as tk
+from tkinter import messagebox
 import random
 
 class Room:
@@ -8,7 +10,7 @@ class Room:
         self.item = self.generate_item()
 
     def generate_monster(self):
-        if random.random() > 0.5:  # 50% шанс появления монстра
+        if random.random() > 0.5:
             return Monster("Гоблин", random.randint(5, 15))
         return None
 
@@ -20,7 +22,6 @@ class Room:
         return f"Комната: {self.description}, Уровень: {self.level}. " \
                f"{'Здесь есть монстр!' if self.monster else 'Пусто.'} " \
                f"{'Вы нашли предмет: ' + str(self.item) if self.item else ''}"
-
 
 class Player:
     def __init__(self, name):
@@ -39,20 +40,8 @@ class Player:
     def heal(self, amount):
         self.health = min(100, self.health + amount)
 
-    def add_experience(self, exp):
-        self.experience += exp
-        if self.experience >= self.level * 10:
-            self.level_up()
-
-    def level_up(self):
-        self.level += 1
-        self.health = 100
-        self.mana += 20
-        print(f"Поздравляем, {self.name} достиг уровня {self.level}!")
-
     def __str__(self):
-        return f"{self.name}: {self.health} HP, {self.mana} MP, Уровень: {self.level}, Инвентарь: {self.inventory}"
-
+        return f"{self.name}: {self.health} HP, {self.mana} MP, Инвентарь: {', '.join(str(item) for item in self.inventory) if self.inventory else 'пусто'}"
 
 class Monster:
     def __init__(self, name, damage):
@@ -62,11 +51,10 @@ class Monster:
 
     def attack(self, player):
         player.take_damage(self.damage)
-        print(f"{self.name} атакует! Урон: {self.damage}")
+        return f"{self.name} атакует и наносит {self.damage} урона!"
 
     def __str__(self):
-        return f"Монстр {self.name}, Урон: {self.damage}, Здоровье: {self.health}"
-
+        return f"Монстр {self.name}, Здоровье: {self.health}"
 
 class Weapon:
     def __init__(self, name, damage):
@@ -76,7 +64,6 @@ class Weapon:
     def __str__(self):
         return f"{self.name} (+{self.damage} урона)"
 
-
 class Potion:
     def __init__(self, name, heal_amount):
         self.name = name
@@ -84,14 +71,17 @@ class Potion:
 
     def use(self, player):
         player.heal(self.heal_amount)
-        print(f"Вы использовали {self.name}, восстановлено {self.heal_amount} здоровья.")
+        return f"Вы использовали {self.name}, восстановлено {self.heal_amount} здоровья."
 
     def __str__(self):
         return f"{self.name} (+{self.heal_amount} здоровья)"
 
+class GameOver(Exception):
+    pass
 
 class Game:
-    def __init__(self):
+    def __init__(self, root):
+        self.root = root
         self.player = None
         self.floors = []
         self.current_floor = 0
@@ -99,79 +89,109 @@ class Game:
         self.total_floors = 5
         self.rooms_per_floor = 5
 
-    def generate_floor(self, floor_number):
-        return [Room(f"Комната {i+1}, этаж {floor_number}", level=floor_number) for i in range(self.rooms_per_floor)]
+        # UI Elements
+        self.text_area = None
+        self.health_label = None
+        self.mana_label = None
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.root.title("Подземелье")
+        self.text_area = tk.Text(self.root, height=15, width=50, state=tk.DISABLED)
+        self.text_area.grid(row=0, column=0, columnspan=3)
+
+        tk.Button(self.root, text="Вперед", command=lambda: self.move(1)).grid(row=1, column=0)
+        tk.Button(self.root, text="Осмотреть", command=self.inspect_room).grid(row=1, column=1)
+        tk.Button(self.root, text="Атака", command=lambda: self.battle("attack")).grid(row=2, column=0)
+        tk.Button(self.root, text="Заклинание", command=lambda: self.battle("spell")).grid(row=2, column=1)
+        tk.Button(self.root, text="Бег", command=lambda: self.battle("run")).grid(row=2, column=2)
+
+        self.health_label = tk.Label(self.root, text="HP: 100")
+        self.health_label.grid(row=3, column=0)
+        self.mana_label = tk.Label(self.root, text="MP: 50")
+        self.mana_label.grid(row=3, column=1)
 
     def start(self, player_name):
         self.player = Player(player_name)
-        print(f"Добро пожаловать, {self.player.name}!")
         self.floors.append(self.generate_floor(1))
-        self.main_loop()
+        self.display_message(f"Добро пожаловать, {self.player.name}!")
+        self.display_room()
 
-    def main_loop(self):
-        while self.current_floor < self.total_floors:
-            current_room = self.floors[self.current_floor][self.current_room]
-            print(current_room)
-
-            if current_room.monster:
-                self.battle(current_room.monster)
-
-            command = input("Ваш ход (вперед/осмотреть): ").lower()
-            if command == "вперед":
-                self.move(1)
-            elif command == "осмотреть":
-                print(f"Вы нашли: {current_room.item}")
-                if current_room.item:
-                    self.player.inventory.append(current_room.item)
-                    current_room.item = None
-            else:
-                print("Неизвестная команда.")
-
-        print("Поздравляем, вы прошли все этажи подземелья и победили!")
+    def generate_floor(self, floor_number):
+        return [Room(f"Комната {i+1} этажа {floor_number}", level=floor_number) for i in range(self.rooms_per_floor)]
 
     def move(self, direction):
+        # Проверяем, есть ли монстр в текущей комнате
+        current_room = self.floors[self.current_floor][self.current_room]
+        if current_room.monster is not None:  # Если монстр не побежден
+            self.display_message("В комнате еще есть монстр! Победите его перед переходом.")
+            return
+
+        # Переход в следующую комнату
         self.current_room += direction
-        if self.current_room >= self.rooms_per_floor:  # Переход на новый этаж
+        if self.current_room >= self.rooms_per_floor:
             self.current_room = 0
             self.current_floor += 1
             if self.current_floor < self.total_floors:
-                print(f"Вы переходите на этаж {self.current_floor + 1}.")
                 self.floors.append(self.generate_floor(self.current_floor + 1))
+                self.display_message(f"Вы переходите на этаж {self.current_floor + 1}.")
             else:
-                print("Вы достигли последнего этажа!")
-        elif self.current_room < 0:
-            self.current_room = 0
-            print("Вы не можете вернуться назад.")
+                messagebox.showinfo("Победа!", "Вы прошли всё подземелье! Поздравляем!")
+                self.root.quit()
+        self.display_room()
 
-    def battle(self, monster):
-        print(f"Сражение началось! {monster}")
-        while monster.health > 0 and self.player.health > 0:
-            action = input("Атака/Заклинание/Бег: ").lower()
-            if action == "атака":
-                monster.health -= 10
-                print(f"Вы нанесли 10 урона {monster.name}.")
-                if monster.health > 0:
-                    monster.attack(self.player)
-            elif action == "заклинание" and self.player.mana >= 10:
-                monster.health -= 20
-                self.player.mana -= 10
-                print(f"Вы использовали заклинание! Урон: 20. Осталось маны: {self.player.mana}.")
-                if monster.health > 0:
-                    monster.attack(self.player)
-            elif action == "бег":
-                print("Вы сбежали!")
-                return
-            else:
-                print("Неизвестное действие.")
-        print(f"Вы победили {monster.name}!" if self.player.health > 0 else f"{monster.name} победил вас.")
+    def inspect_room(self):
+        current_room = self.floors[self.current_floor][self.current_room]
+        if current_room.item:
+            self.player.inventory.append(current_room.item)
+            self.display_message(f"Вы нашли: {current_room.item}")
+            current_room.item = None
+        else:
+            self.display_message("Здесь ничего нет.")
 
-class GameOver(Exception):
-    pass
+    def battle(self, action):
+        current_room = self.floors[self.current_floor][self.current_room]
+        monster = current_room.monster
+        if not monster:
+            self.display_message("В комнате нет монстра.")
+            return
 
+        if action == "attack":
+            monster.health -= 10
+            self.display_message(f"Вы нанесли 10 урона монстру {monster.name}.")
+        elif action == "spell" and self.player.mana >= 10:
+            monster.health -= 20
+            self.player.mana -= 10
+            self.display_message(f"Вы использовали заклинание! Урон 20. Осталось маны: {self.player.mana}.")
+        elif action == "run":
+            self.display_message("Вы сбежали из комнаты!")
+            return
+        else:
+            self.display_message("Недостаточно маны для заклинания.")
+
+        if monster.health > 0:
+            result = monster.attack(self.player)
+            self.display_message(result)
+            self.update_status()
+        else:
+            self.display_message(f"Вы победили монстра {monster.name}!")
+            current_room.monster = None
+
+    def display_room(self):
+        current_room = self.floors[self.current_floor][self.current_room]
+        self.display_message(str(current_room))
+
+    def display_message(self, message):
+        self.text_area.config(state=tk.NORMAL)
+        self.text_area.insert(tk.END, message + "\n")
+        self.text_area.config(state=tk.DISABLED)
+
+    def update_status(self):
+        self.health_label.config(text=f"HP: {self.player.health}")
+        self.mana_label.config(text=f"MP: {self.player.mana}")
 
 if __name__ == "__main__":
-    try:
-        game = Game()
-        game.start("Игрок")
-    except GameOver as e:
-        print(e)
+    root = tk.Tk()
+    game = Game(root)
+    game.start("Игрок")
+    root.mainloop()
